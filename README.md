@@ -11,6 +11,3 @@ quickactivate(@__DIR__)
 ```
 
 This is preferred to using the `--project` option when starting Julia.
-
-
-

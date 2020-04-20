@@ -1,5 +1,5 @@
 ---
-title: "Efficient Evaluation of the Profiled Log-Likelihood in Linear Mixed-Effects Models"
+title: "Efficient Evaluation of a Profiled Log-Likelihood for Linear Mixed-Effects Models"
 author:
 - name: Phillip M. Alday
   affil: Max Planck Institute
@@ -29,18 +29,18 @@ keywords: linear mixed models, penalized least squares, Cholesky decomposition, 
 
 # Introduction
 
-We derive an enhanced form of the representation of the profiled log-likelihood for linear mixed-effects models given in [@bates.maechler.etal:2015] and describe the implementation of this approach in the MixedModels package for Julia.  This formulation and implementation is particularly effective when fitting linear mixed models to large data sets with complex structure [@bates2019n].
+We derive an enhanced form of the representation of the profiled log-likelihood for linear mixed-effects models given in @bates.maechler.etal:2015 and describe the implementation of this approach in the MixedModels package for Julia.  This formulation and implementation are particularly effective when fitting linear mixed models to large data sets with complex structure [@bates2019n].
 
-In [@bates.maechler.etal:2015] the expression for the profiled log-likelihood was derived from the solution to a penalized least squares (PLS) problem.  We show that it is not necessary to evaluate the solution completely. The information necessary for the profiled log-likelihood evaluation can be obtained from the Cholesky factor of an extended system.  By itself this is not terribly important as most of the work for the explicit solution takes place in the update of the Cholesky factor.  However, the optimization of the objective to obtain the maximum likelihood estimates (MLEs) typically involves tens or hundreds, sometimes thousands, of evaluations of this objective and, in the formulation given here, an condensed intermediate representation of the system to be solved can be re-used at each evaluation.
+In @bates.maechler.etal:2015 the expression for the profiled log-likelihood was derived from the solution to a penalized least squares (PLS) problem.  We show that it is not necessary to evaluate the solution completely. The information necessary for the profiled log-likelihood evaluation can be obtained from the Cholesky factor of an extended system.  By itself this is not terribly important as most of the work for the explicit solution takes place in the update of the Cholesky factor.  However, the optimization of the objective to obtain the maximum likelihood estimates (MLEs) typically involves tens or hundreds, sometimes thousands, of evaluations of this objective and, in the formulation given here, an condensed intermediate representation of the system to be solved can be re-used at each evaluation.
 
 Within the general framework of the penalized least squares (PLS) representation of the profiled log-likelihood there can be several computational approaches; ranging from coarse, general approaches such as that implemented in the lme4 package for R, to fine-grained approaches that require considerable flexibility in implementation of individual pieces. Several aspects of the Julia language, such as multiple dispatch and pass by reference, allow for highly efficient implementation of the fine-grained approach.
 
-In section 2 we extend the derivation of the profiled log-likelihood given in [@bates.maechler.etal:2015] to an extended PLS problem. In section 3 we demonstrate some of the implementation of the fine-grained approach to updating the decomposition.
+In section 2 we extend the derivation of the profiled log-likelihood given in @bates.maechler.etal:2015 to an extended PLS problem. In section 3 we demonstrate some of the implementation of the fine-grained approach to updating the decomposition.
 
 # Profiled log-likelihood from an extended factorization
 
-As described in [@bates.maechler.etal:2015], the probability model for linear mixed-effects incorporates two vector-valued random variables: the response. $\mathcal{Y}$, and the random-effects, $\mathcal{B}$, both of which have multivariate Gaussian distributions.  The mean of the conditional distribution of $\mathcal{Y}$ given $\mathcal{B}=\mathbf{b}$ is a *linear predictor* incorporating the fixed and known model matrices $\mathbf{X}$ (of size $n\times p$) and $\mathbf{Z}$ (of size $n\times q$) as
-\begin{equation}
+As described in @bates.maechler.etal:2015, the probability model for linear mixed-effects incorporates two vector-valued random variables: the $n$-dimensional response, $\mathcal{Y}$, and the $q$-dimensional random-effects, $\mathcal{B}$, both of which have multivariate Gaussian distributions.  The mean of the conditional distribution of $\mathcal{Y}$ given $\mathcal{B}=\mathbf{b}$ is a *linear predictor* incorporating the fixed and known model matrices $\mathbf{X}$ (of size $n\times p$) and $\mathbf{Z}$ (of size $n\times q$) and the $p$-dimensional fixed-effects parameter vector, $\mathbf{\beta}$, as
+\begin{equation}\label{eq:Yconddist}
 (\mathcal{Y}|\mathcal{B}=\mathbf{b})\sim\mathcal{N}\left(\mathbf{X\beta}+\mathbf{Zb}, \sigma^2\mathbf{I}_n\right)
 \end{equation}
 
@@ -51,9 +51,10 @@ The unconditional distribution of $\mathcal{B}$ is
 where the positive semi-definite symmetric covariance matrix $\mathbf{\Sigma}$, of size $q\times q$, is parameterized.
 
 For computational convenience, and without loss of generality, the covariance matrix $\mathbf{\Sigma}$ is expressed in terms of the lower-triangular *relative covariance factor*, $\mathbf{\Lambda}_{\mathbf{\theta}}$, and the scale parameter, $\sigma$, as
-\begin{equation}
-\mathbf{\Sigma}=\sigma^2\mathbf{\Lambda}_{\mathbf{\theta}}\mathbf{\Lambda}_{\mathbf{\theta}}^\prime
+\begin{equation}\label{eq:spherical}
+\mathbf{\Sigma}=\sigma^2\mathbf{\Lambda}_{\mathbf{\theta}}\mathbf{\Lambda}_{\mathbf{\theta}}^\prime .
 \end{equation}
+(The scale parameter, $\sigma$, in eqn.~\ref{eq:spherical} is the same as that in eqn.~\ref{eq:Yconddist}.)
 
 Another way of viewing the covariance factor is that
 the random effects vector, $\mathcal{B}$, with distribution $\mathcal{N}(\mathbf{0},\Sigma)$, can be generated from a "spherical" random effects vector, $\mathcal{U}$, as
@@ -63,14 +64,14 @@ the random effects vector, $\mathcal{B}$, with distribution $\mathcal{N}(\mathbf
 
 The joint density of $\mathcal{Y}$ and $\mathcal{U}$, which is the product of the conditional density, $f_{\mathcal{Y}|\mathcal{U}=\mathbf{u}}(\mathbf{y}|\mathbf{u})$, and the unconditional density, $f_{\mathcal{U}}(\mathbf{u})$, becomes
 \begin{equation}
-f_{\mathcal{Y},\mathcal{U}}(\mathbf{y,u})=\frac{1}{(2\pi\sigma^2)^{(n+q)/2}}\exp{\frac{-r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})}{2\sigma^2}}
+f_{\mathcal{Y},\mathcal{U}}(\mathbf{y,u})=\frac{1}{(2\pi\sigma^2)^{(n+q)/2}}\exp\left(\frac{-r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})}{2\sigma^2}\right)
 \end{equation}
 where the penalized sum of squared residuals, $r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})$, is
 \begin{equation}
 r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})=\|\mathbf{y}-\mathbf{X\beta}-\mathbf{Z\Lambda_\theta u}\|^2+\|\mathbf{u}\|^2 .
 \end{equation}
 
-To this point the derivation is exactly that of [@bates.maechler.etal:2015].  Here's where it changes.  The penalized sum of squared residuals can be written
+To this point the derivation is exactly that of @bates.maechler.etal:2015.  Here's where it changes.  The penalized sum of squared residuals can be written
 \begin{equation}
 \begin{aligned}
 r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta}) &=  \|\mathbf{y}-\mathbf{X\beta}-\mathbf{Z\Lambda_\theta u}\|^2+\|\mathbf{u}\|^2\\
@@ -132,13 +133,13 @@ Furthermore, for a fixed value of $\mathbf{\theta}$ the minimum $r^2_\mathbf{\th
 \begin{equation}
 \mathbf{R}_{XX}\widehat{\mathbf{\beta}}(\mathbf{\theta})=\mathbf{r}_{Xy} .
 \end{equation}
-The conditional mode, $\tilde{\mathbf{u}}$, of $\mathcal{U}$ given $\mathcal{Y}=\mathbf{y}$ is the solution to
-\begin{equation}
-\mathbf{R}_{ZZ}\tilde{\mathbf{u}}=\mathbf{r}_{Zy}-\mathbf{R}_{ZX}\mathbf{\beta}
+The conditional mode, $\tilde{\mathbf{u}}$, of $\mathcal{U}$ given $\mathcal{Y}=\mathbf{y}$, is the solution to
+\begin{equation}\label{eq:condmode}
+\mathbf{R}_{ZZ}\tilde{\mathbf{u}}=\mathbf{r}_{Zy}-\mathbf{R}_{ZX}\mathbf{\beta} .
 \end{equation}
-Technically, $\mathbf{\beta}$ and $\mathbf{\theta}$ are assumed known because this is a statement about distributions.  In practice, the estimates, $\widehat{\mathbf{\theta}}$ and $\widehat{\beta}$, are plugged in.
+Technically, $\mathbf{\beta}$ and $\mathbf{\theta}$ in eqn.~\ref{eq:condmode} are assumed known because it is a statement about distributions.  In practice, the estimates, $\widehat{\mathbf{\theta}}$ and $\widehat{\beta}$, are plugged in when evaluating the conditional modes or ``best linear unbiased predictors (BLUPs)'' as they are sometimes called.
 
-A Cholesky decomposition can be written in terms of the lower triangular factor on the left, $\mathbf{L}$, or in terms of $\mathbf{R}$ on the right.  In languages that use column-major ordering of arrays, such as Julia and R, there is a slight technical advantage in evaluating the lower triangular factor because the algorithm works column-wise as opposed to the evaluation of the upper triangular factor that works row-wise.  However, the theory is a bit easier to see in terms of $\mathbf{R}$ so we write the expressions in terms of $\mathbf{R}$ even though the actual evaluation uses $\mathbf{L}$.
+A Cholesky decomposition, $\mathbf{A}=\mathbf{R}^\prime\mathbf{R}$, can be written in terms of $\mathbf{R}$, the upper triangular factor on the right, or in terms of $\mathbf{L}=\mathbf{R}^\prime$, the lower triangular factor on the left.  In languages that use column-major ordering of arrays, such as Julia and R, there is a slight technical advantage in evaluating the lower triangular factor because the algorithm works column-wise, as opposed to the evaluation of the upper triangular factor that works row-wise.  However, the theory is a bit easier to express in terms of $\mathbf{R}$ so we write the expressions in terms of $\mathbf{R}$ even though the actual evaluation uses $\mathbf{L}$.
 
 To evaluate the likelihood,
 \begin{equation}

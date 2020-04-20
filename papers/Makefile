@@ -6,10 +6,10 @@
 	pandoc -r markdown+simple_tables+table_captions+yaml_metadata_block+smart -w latex --no-highlight --pdf-engine=xelatex --template=jss.latex --natbib -o $@ $<
 
 %.pdf:	%.tex
-	pdflatex $(basename $<)
+	xelatex $(basename $<)
 	bibtex $(basename $<)
-	pdflatex $(basename $<)
-	pdflatex $(basename $<)
+	xelatex $(basename $<)
+	xelatex $(basename $<)
 	rm -f *.aux *.bcf *.blg *.log *.out *.bbl
 
 clean:
