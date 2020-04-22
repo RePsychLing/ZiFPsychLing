@@ -1,0 +1,323 @@
+\documentclass[article]{jss}
+\usepackage{natbib}
+\usepackage{amsmath}
+\usepackage{amsfonts,amssymb}
+\usepackage{minted}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% declarations for jss.cls %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% almost as usual
+\author{Phillip M. Alday\\Max Planck Institute\And
+				Dave Kleinschmidt\\Rutgers University\And
+				Reinhold Kliegl\\University of Potsdam\And
+				Douglas Bates\\University of Wisconsin}
+
+\title{Efficient Evaluation of a Profiled Log-Likelihood for Linear Mixed-Effects Models}
+
+%% for pretty printing and a nice hypersummary also set:
+\Plainauthor{ Phillip M. Alday,  Dave Kleinschmidt,  Reinhold Kliegl,  Douglas Bates} %% comma-separated
+\Plaintitle{Efficient Evaluation of a Profiled Log-Likelihood for Linear Mixed-Effects Models} %% without formatting
+%% an abstract and keywords
+\Abstract{
+  An earlier paper (Bates, Maechler, Bolker and Walker, 2015) showed that
+  the profiled log-likelihood of a linear mixed-effects model can be
+  evaluated from the solution to a penalized least square problem and
+  described in some detail the implementation of this method in the lme4
+  package for R. In this paper we described an enhanced approach to this
+  PLS expression and its implementation in the MixedModels package for
+  Julia.
+}
+\Keywords{linear mixed models, penalized least squares, Cholesky decomposition, Julia language}
+\Plainkeywords{linear mixed models, penalized least squares, Cholesky decomposition, Julia language} %% without formatting
+
+%% publication information
+%% NOTE: Typically, this can be left commented and will be filled out by the technical editor
+%% \Volume{50}
+%% \Issue{9}
+%% \Month{June}
+%% \Year{2012}
+%% \Submitdate{2012-06-04}
+%% \Acceptdate{2012-06-04}
+
+%% The address of (at least) one author should be given
+%% in the following format:
+\Address{
+    Douglas Bates\\
+    Department of Statistics\\
+    1300 University Ave.\\
+    Madison, WI 53706\\
+    U.S.A.  \\\email{douglas.bates@wisc.edu}
+}
+%% It is also possible to add a telephone and fax number
+%% before the e-mail in the following format:
+%% Telephone: +43/512/507-7103
+%% Fax: +43/512/507-2851
+
+%% for those who use Sweave please include the following line (with % symbols):
+%% need no \usepackage{Sweave.sty}
+
+%% end of declarations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{document}
+
+\hypertarget{introduction}{\section{Introduction}\label{sec:introduction}}
+
+We derive an enhanced form of the representation of the profiled
+log-likelihood for linear mixed-effects models given in
+\citet{bates.maechler.etal:2015} and describe the implementation of this
+approach in the MixedModels package for Julia. This formulation and
+implementation are particularly effective when fitting linear mixed
+models to large data sets with complex structure \citep{bates2019n}.
+
+In \citet{bates.maechler.etal:2015} the expression for the profiled
+log-likelihood was derived from the solution to a penalized least
+squares (PLS) problem. We show that it is not necessary to evaluate the
+solution completely if only the objective function value is required.
+The information necessary to evaluate the profiled
+log-likelihood can be obtained from the Cholesky factor of an
+extended system. By itself this is not terribly important as most of the
+work for the explicit solution takes place in the update of the Cholesky
+factor. However, the optimization of the objective to obtain the maximum
+likelihood estimates (MLEs) typically involves tens or hundreds,
+sometimes thousands, of evaluations of this objective and, in the
+formulation given here, an condensed intermediate representation of the
+system to be solved can be re-used at each evaluation.
+
+Within the general framework of the penalized least squares (PLS)
+representation of the profiled log-likelihood there can be several
+computational approaches; ranging from coarse, general approaches such
+as that implemented in the lme4 package for R, to fine-grained
+approaches that require considerable flexibility in implementation of
+individual pieces. Several aspects of the Julia language, such as
+multiple dispatch and pass by reference, allow for highly efficient
+implementation of the fine-grained approach.
+
+In section~\ref{sec:profiled-log-likelihood} we extend the derivation of the profiled log-likelihood given in \citet{bates.maechler.etal:2015} to an extended PLS problem.
+In section~\ref{sec:sparsity-in-random-effects} we demonstrate some of the implementation of the fine-grained
+approach to updating the decomposition.
+
+\hypertarget{profiled-log-likelihood-from-an-extended-factorization}{%
+\section{Profiled log-likelihood from an extended factorization}\label{sec:profiled-log-likelihood}}
+
+As described in \citet{bates.maechler.etal:2015}, the probability model
+for linear mixed-effects incorporates two vector-valued random
+variables: the \(n\)-dimensional response, \(\mathcal{Y}\), and the
+\(q\)-dimensional random-effects, \(\mathcal{B}\), both of which have
+multivariate Gaussian distributions. The mean of the conditional
+distribution of \(\mathcal{Y}\) given \(\mathcal{B}=\mathbf{b}\) is a
+\emph{linear predictor} incorporating the fixed and known model matrices
+\(\mathbf{X}\) (of size \(n\times p\)) and \(\mathbf{Z}\) (of size
+\(n\times q\)) and the \(p\)-dimensional fixed-effects parameter vector,
+\(\mathbf{\beta}\), as
+\begin{equation}\label{eq:Yconddist}
+(\mathcal{Y}|\mathcal{B}=\mathbf{b})\sim\mathcal{N}\left(\mathbf{X\beta}+\mathbf{Zb}, \sigma^2\mathbf{I}_n\right)
+\end{equation}
+
+The unconditional distribution of \(\mathcal{B}\) is
+\begin{equation}
+\mathcal{B}\sim\mathcal{N}\left(\mathbf{0},\mathbf{\Sigma}\right)
+\end{equation}
+where the positive semi-definite symmetric covariance matrix \(\mathbf{\Sigma}\), of size \(q\times q\), is parameterized.
+
+For computational convenience, and without loss of generality, the
+covariance matrix \(\mathbf{\Sigma}\) is expressed in terms of the
+lower-triangular \emph{relative covariance factor},
+\(\mathbf{\Lambda}_{\mathbf{\theta}}\), and the scale parameter,
+\(\sigma\), as
+\begin{equation}\label{eq:spherical}
+\mathbf{\Sigma}=\sigma^2\mathbf{\Lambda}_{\mathbf{\theta}}\mathbf{\Lambda}_{\mathbf{\theta}}^\prime .
+\end{equation}
+(The scale parameter, \(\sigma\), in eqn.~\ref{eq:spherical} is the same as that in eqn.~\ref{eq:Yconddist}.)
+
+Another way of viewing the covariance factor is that the random effects
+vector, \(\mathcal{B}\), with distribution \(\mathcal{N}(\mathbf{0},\Sigma)\), can be generated from a
+``spherical'' random effects vector, \(\mathcal{U}\), as
+\begin{equation}\label{eq:spherical-def}
+\mathcal{B} = \mathbf{\Lambda}_{\mathbf{\theta}} \mathcal{U}\quad\mathrm{where}\quad\mathcal{U}\sim\mathcal{N}(\mathbf{0},\sigma^2\mathbf{I}_q) .
+\end{equation}
+
+The joint density of \(\mathcal{Y}\) and \(\mathcal{U}\), which is the product of the conditional density,
+\(f_{\mathcal{Y}|\mathcal{U}=\mathbf{u}}(\mathbf{y}|\mathbf{u})\), and
+the unconditional density, \(f_{\mathcal{U}}(\mathbf{u})\), becomes
+\begin{equation}\label{eq:joint-density}
+f_{\mathcal{Y},\mathcal{U}}(\mathbf{y,u})=\frac{1}{(2\pi\sigma^2)^{(n+q)/2}}\exp\left(\frac{-r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})}{2\sigma^2}\right)
+\end{equation}
+where the penalized sum of squared residuals, \(r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})\), is
+\begin{equation}\label{eq:penalized-rss}
+r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})=\|\mathbf{y}-\mathbf{X\beta}-\mathbf{Z\Lambda_\theta u}\|^2+\|\mathbf{u}\|^2 .
+\end{equation}
+
+To this point this derivation is exactly that of \citet{bates.maechler.etal:2015}.
+Here's where it changes.
+The penalized sum of squared residuals can be written
+\begin{equation}\label{eq:prss}
+\begin{aligned}
+r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta}) &=  \|\mathbf{y}-\mathbf{X\beta}-\mathbf{Z\Lambda_\theta u}\|^2+\|\mathbf{u}\|^2\\
+&=\left\|\begin{bmatrix}
+\mathbf{Z\Lambda}&\mathbf{X}&\mathbf{y}\\
+-\mathbf{I}_q&\mathbf{0}&\mathbf{0}
+\end{bmatrix}\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\right\|^2 \\
+&= \begin{bmatrix}-\mathbf{u}&-\mathbf{\beta}&1\end{bmatrix}
+\begin{bmatrix}
+\mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{Z\Lambda}+\mathbf{I} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{X} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{y} \\
+\mathbf{X}^\prime\mathbf{Z\Lambda} & \mathbf{X}^\prime\mathbf{X} & \mathbf{X}^\prime\mathbf{y} \\
+\mathbf{y}^\prime\mathbf{Z\Lambda} & \mathbf{y}^\prime\mathbf{X} & \mathbf{y}^\prime\mathbf{y}
+\end{bmatrix}
+\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\\
+&=
+\begin{bmatrix}-\mathbf{u}&-\mathbf{\beta}&1\end{bmatrix}
+\begin{bmatrix}
+\mathbf{R}_{ZZ}^\prime & \mathbf{0} & \mathbf{0} \\
+\mathbf{R}_{ZX}^\prime & \mathbf{R}_{XX}^\prime & \mathbf{0} \\
+\mathbf{r}_{Zy}^\prime & \mathbf{r}_{Xy}^\prime & r_{yy}
+\end{bmatrix}
+\begin{bmatrix}
+\mathbf{R}_{ZZ} & \mathbf{R}_{ZX} & \mathbf{r}_{Zy} \\
+\mathbf{0} & \mathbf{R}_{XX} & \mathbf{r}_{Xy} \\
+\mathbf{0} & \mathbf{0} & r_{yy}
+\end{bmatrix}
+\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\\
+&= \left\|
+\begin{bmatrix}
+\mathbf{R}_{ZZ} & \mathbf{R}_{ZX} & \mathbf{r}_{Zy} \\
+\mathbf{0} & \mathbf{R}_{XX} & \mathbf{r}_{Xy} \\
+\mathbf{0} & \mathbf{0} & r_{yy}
+\end{bmatrix}
+\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\right\|^2\\
+&=\|\mathbf{r}_{Zy}-\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{R}_{ZZ}\mathbf{u}\|^2+ \|\mathbf{r}_{Xy}-\mathbf{R}_{XX}\mathbf{\beta}\|^2 + r_{yy}^2\\
+&=r_{yy}^2+\|\mathbf{R}_{XX}\mathbf{\beta}-\mathbf{r}_{Xy}\|^2+\|\mathbf{R}_{ZZ}\mathbf{u}+\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{r}_{Zy}\|^2
+\end{aligned}
+\end{equation} where \begin{equation}
+\mathbf{R}(\mathbf{\theta})=
+\begin{bmatrix}
+\mathbf{R}_{ZZ} & \mathbf{R}_{ZX} & \mathbf{r}_{Zy} \\
+\mathbf{0} & \mathbf{R}_{XX} & \mathbf{r}_{Xy} \\
+\mathbf{0} & \mathbf{0} & r_{yy}
+\end{bmatrix}
+\end{equation} is the upper triangular, right Cholesky factor of the
+symmetric, positive definite matrix \begin{equation}
+\begin{bmatrix}
+\mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{Z\Lambda}+\mathbf{I} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{X} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{y} \\
+\mathbf{X}^\prime\mathbf{Z\Lambda} & \mathbf{X}^\prime\mathbf{X} & \mathbf{X}^\prime\mathbf{y} \\
+\mathbf{y}^\prime\mathbf{Z\Lambda} & \mathbf{y}^\prime\mathbf{X} & \mathbf{y}^\prime\mathbf{y}
+\end{bmatrix}
+\end{equation}
+The sub-matrices on the diagonal, \(\mathbf{R}_{ZZ}\) and \(\mathbf{R}_{XX}\), are upper triangular.
+Furthermore \(\mathbf{R}_{ZZ}\) is sparse with positive diagonal elements because
+\(\mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{Z}\mathbf{\Lambda}+\mathbf{I}\)
+is always positive definite, even when \(\mathbf{\Lambda}\) or
+\(\mathbf{Z}\) are rank-deficient. Its determinant,
+\(|\mathbf{R}_{ZZ}|\), is the product of its diagonal elements and must
+be positive.
+
+Furthermore, for a fixed value of \(\mathbf{\theta}\) the minimum
+\(r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})\) is \(r_{yy}^2\) and
+the conditional estimate of \(\mathbf{\beta}\) satisfies
+\begin{equation}
+\mathbf{R}_{XX}\widehat{\mathbf{\beta}}(\mathbf{\theta})=\mathbf{r}_{Xy} .
+\end{equation}
+The conditional mode, \(\tilde{\mathbf{u}}\), of
+\(\mathcal{U}\) given \(\mathcal{Y}=\mathbf{y}\), is the solution to
+\begin{equation}\label{eq:condmode}
+\mathbf{R}_{ZZ}\tilde{\mathbf{u}}=\mathbf{r}_{Zy}-\mathbf{R}_{ZX}\mathbf{\beta} .
+\end{equation}
+Technically, \(\mathbf{\beta}\) and \(\mathbf{\theta}\)
+in eqn.~\ref{eq:condmode} are assumed known because this expression
+is a statement about distributions. In practice, the estimates,
+\(\widehat{\mathbf{\theta}}\) and \(\widehat{\beta}\), are plugged in
+when evaluating the conditional modes or ``best linear unbiased
+predictors (BLUPs)'' as they are sometimes called.
+
+A Cholesky decomposition, \(\mathbf{A}=\mathbf{R}^\prime\mathbf{R}\),
+can be written in terms of \(\mathbf{R}\), the upper triangular factor
+on the right, or in terms of \(\mathbf{L}=\mathbf{R}^\prime\), the lower
+triangular factor on the left. In languages that use column-major
+ordering of arrays, such as Julia and R, there is a slight technical
+advantage in evaluating the lower triangular factor because the
+algorithm works column-wise, as opposed to the evaluation of the upper
+triangular factor that works row-wise. However, the theory is a bit
+easier to express in terms of \(\mathbf{R}\) so we write the expressions
+in terms of \(\mathbf{R}\) even though the actual evaluation uses
+\(\mathbf{L}\).
+
+To evaluate the likelihood,
+\begin{equation}\label{eq:likelihood-abstract}
+L(\mathbf{\theta},\mathbf{\beta},\sigma|\mathbf{y}) = \int_\mathbf{u} f_{\mathcal{Y},\mathcal{U}}(\mathbf{y},\mathbf{u})\, d\mathbf{u}
+\end{equation}
+we isolate the part of the joint density that depends on \(\mathbf{u}\) and perform a change of variable to
+\begin{equation}\label{eq:u-system}
+\mathbf{v}=\mathbf{R}_{ZZ}\mathbf{u}+\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{r}_{Zy} .
+\end{equation}
+From the properties of the multivariate Gaussian distribution
+\begin{equation}\label{eq:likelihood-integral}
+\begin{aligned}
+\int_{\mathbf{u}}\frac{1}{(2\pi\sigma^2)^{q/2}}\exp\left(-
+\frac{\|\mathbf{R}_{ZZ}\mathbf{u}+\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{r}_{Zy}\|^2}{2\sigma^2}\right)\,d\mathbf{u}
+&=\int_{\mathbf{v}}\frac{1}{(2\pi\sigma^2)^{q/2}}\exp\left(-\frac{\|\mathbf{v}\|^2}{2\sigma^2}\right)|\mathbf{R}_{ZZ}|^{-1}\,d\mathbf{v}\\
+&=|\mathbf{R}_{ZZ}|^{-1}
+\end{aligned}
+\end{equation}
+from which we obtain the likelihood as
+\begin{equation}\label{eq:likelihood}
+L(\mathbf{\theta},\mathbf{\beta},\sigma)=\frac{|\mathbf{R}_{ZZ}|^{-1}}{(2\pi\sigma^2)^{n/2}}\exp\left(-
+\frac{r_{yy}^2 + \|\mathbf{R}_{XX}(\mathbf{\beta}-\widehat{\mathbf{\beta}})\|^2}{2\sigma^2}\right) .
+\end{equation}
+If we plug in \(\mathbf{\beta}=\widehat{\mathbf{\beta}}\)
+and take the logarithm we can solve for the estimate of \(\sigma^2\),
+given \(\mathbf{\theta}\)
+\begin{equation}\label{eq:sigma-hat}
+\widehat{\sigma^2}=\frac{r_{yy}^2}{n}
+\end{equation} which gives the \emph{profiled log-likelihood},
+\(\ell(\mathbf{\theta}|\mathbf{y})=\log L(\mathbf{\theta},\widehat{\mathbf{\beta}},\widehat{\sigma})\)
+as
+\begin{equation}\label{eq:profiled-log-likelihood}
+-2\ell(\mathbf{\theta}|\mathbf{y})=2\log(|\mathbf{R}_{ZZ}|) +
+    n\left(1+\log\left(\frac{2\pi r_{yy}^2(\mathbf{\theta})}{n}\right)\right)
+\end{equation}
+
+This may seem complicated but, relative to other formulations of the
+model, it is remarkably simple.
+
+One of the interesting aspects of this formulation is that it is not
+necessary to solve for the conditional estimate of \(\mathbf{\beta}\) or
+the conditional modes of the random effects when evaluating the
+log-likelihood. The two values needed for the log-likelihood,
+\(2\log(|\mathbf{R}_{ZZ}|)\) and \(r_{yy}^2\) are obtained directly from
+the Cholesky factor.
+
+\hypertarget{Sparsity-in-random-effects-model-matrices}{%
+\section{Sparsity in random-effects model matrices}\label{sec:sparsity-in-random-effects}}
+
+A key to creating efficient algorithms for fitting linear mixed-effects models is exploiting sparsity in $\mathbf{Z}$, the random-effects model matrix, and both sparsity and repetition in $\mathbf{\Lambda}$.
+
+Random effects are associated with the levels of a \emph{grouping factor} representing \emph{observational units} or \emph{experimental units} in the study.
+Common examples of grouping factors are \texttt{subject} or \texttt{item} or \texttt{batch}.
+They are known sources of variability in the response but, in contrast to \emph{experimental factors}, they are not manipulated or controlled -- merely observed.
+In the language of statistical experimental design, these are blocking factors.
+
+The adjective ``random'' actually applies to the levels of these grouping factors in the sense that the levels are not assumed to be repeatable across experiments.
+
+As in lme4, in the MixedModels package a linear mixed-effects model in defined by a formula and a data table.
+The formula must contain one or more \emph{random-effects terms} that include a grouping factor and a linear model expression.
+
+A complete description of the mixed-effects formula language is given in \citet{kleinschmidt.etal:2020}.
+For this discussion we will rely on several examples to illustrate how random-effects terms generate model matrices and relative covariance factors.
+
+<<label=packages;term=true>>=
+using DataFrames, MixedModels     # load packages
+using MixedModels: dataset        # use datasets from the MixedModels package
+dyestuff = dataset(:dyestuff);
+describe(dyestuff)
+fm1 = fit(MixedModel, @formula(yield ~ 1 + (1|batch)), dyestuff)
+BlockDescription(fm1)
+@
+
+
+%\bibliographystyle{jss}
+\bibliography{ZiFPsychLing}
+
+
+\end{document}
