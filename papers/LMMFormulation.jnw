@@ -3,7 +3,8 @@
 \usepackage{amsmath}
 \usepackage{amsfonts,amssymb}
 \usepackage{minted}
-
+\usepackage{mathspec}
+\setmathsfont(Digits,Greek)[Uppercase=Plain,Lowercase=Regular,Scale=MatchLowercase]{GFS Porson}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% declarations for jss.cls %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
