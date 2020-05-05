@@ -1,10 +1,12 @@
 name = "ZiFPsychLing"
 
 [deps]
+BlockDiagonals = "0a1fb500-61f7-11e9-3c65-f5ef3456f9f0"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DataFramesMeta = "1313f7d8-7da2-5740-9ea0-a2ca25f37964"
 GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
 MixedModels = "ff71e718-51f3-5ec2-a782-8ffcbfa3c316"
+Nabla = "49c96f43-aa6d-5a04-a506-44c7070ebe78"
 RCall = "6f49c342-dc21-5d91-9882-a32aef131414"
 Weave = "44d3d7a6-8a23-5bf8-98c5-b353f8df5ec9"
 
