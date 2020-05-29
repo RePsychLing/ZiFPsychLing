@@ -110,9 +110,9 @@ uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 
 [[Distributions]]
 deps = ["FillArrays", "LinearAlgebra", "PDMats", "Printf", "QuadGK", "Random", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns"]
-git-tree-sha1 = "c4ed10355637fcb0725dc6a27060f74df24f13cd"
+git-tree-sha1 = "5ad1c36bff608560df500e93aaeb5b86b4ad45ba"
 uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
-version = "0.23.2"
+version = "0.23.3"
 
 [[DocStringExtensions]]
 deps = ["LibGit2", "Markdown", "Pkg", "Test"]
@@ -216,9 +216,9 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 
 [[Mustache]]
 deps = ["Printf", "Tables"]
-git-tree-sha1 = "2e11fc5de3a01d23482a257e22009ddaab058d9a"
+git-tree-sha1 = "fcfc8266461f2905534aa00c0fc59b8751b1026e"
 uuid = "ffc61752-8dc7-55ee-8c37-f3e9cdd09e70"
-version = "1.0.2"
+version = "1.0.3"
 
 [[NLopt]]
 deps = ["MathProgBase", "NLopt_jll"]
