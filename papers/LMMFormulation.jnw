@@ -67,7 +67,7 @@
 \hypertarget{introduction}{\section{Introduction}\label{sec:introduction}}
 
 We derive an enhanced form of the representation of the profiled
-log-likelihood for linear mixed-effects models given in
+log-likelihood for linear mixed-effects models (LMMs) given in
 \citet{bates.maechler.etal:2015} and describe the implementation of this
 approach in the MixedModels package for Julia. This formulation and
 implementation are particularly effective when fitting linear mixed
@@ -103,8 +103,9 @@ approach to updating the decomposition.
 \hypertarget{profiled-log-likelihood-from-an-extended-factorization}{%
 \section{Profiled log-likelihood from an extended factorization}\label{sec:profiled-log-likelihood}}
 
-As described in \citet{bates.maechler.etal:2015}, the probability model
-for linear mixed-effects incorporates two vector-valued random
+Because the motivation, notation and derivation of the results given here follow so closely those in \citet{bates.maechler.etal:2015} we will simply state them and refer the reader to that paper for a more extensive discussion.  This paper makes one change in notation, the \textit{template} matrix for the $i$th random-effects term, written $\mathbf{T}_i$ in Table 2 of \citet{bates.maechler.etal:2015} is written $\mathbf{\lambda}_i$ here, because it is the template that generates a block of the relative covariance factor, $\mathbf{\Lambda}$.
+
+The probability model for linear mixed-effects incorporates two vector-valued random
 variables: the \(n\)-dimensional response, \(\mathcal{Y}\), and the
 \(q\)-dimensional random-effects, \(\mathcal{B}\), both of which have
 multivariate Gaussian distributions. The mean of the conditional
@@ -116,6 +117,8 @@ distribution of \(\mathcal{Y}\) given \(\mathcal{B}=\mathbf{b}\) is a
 \begin{equation}\label{eq:Yconddist}
 (\mathcal{Y}|\mathcal{B}=\mathbf{b})\sim\mathcal{N}\left(\mathbf{X\beta}+\mathbf{Zb}, \sigma^2\mathbf{I}_n\right)
 \end{equation}
+
+(The model in \citet{bates.maechler.etal:2015} incorporated an optional offset, $\mathbf{o}$, and fixed weights matrix, $\mathbf{W}$ in this distribution but they are rarely used for an LMM and we skip them for clarity.)
 
 The unconditional distribution of \(\mathcal{B}\) is
 \begin{equation}
@@ -133,8 +136,86 @@ lower-triangular \emph{relative covariance factor},
 \end{equation}
 (The scale parameter, \(\sigma\), in eqn.~\ref{eq:spherical} is the same as that in eqn.~\ref{eq:Yconddist}.)
 
-Another way of viewing the covariance factor is that the random effects
-vector, \(\mathcal{B}\), with distribution \(\mathcal{N}(\mathbf{0},\Sigma)\), can be generated from a
+These expressions are essentially repetitions of eqn.(2-4) in \citet{bates.maechler.etal:2015}.
+
+As described section 2 of that paper, in lme4 the model matrix $\mathbf{Z}$ is constructed from one or more random-effects terms which induce a sparsity in $\mathbf{Z}$ and both sparsity and repetition in $\mathbf{\Lambda_\theta}$.
+The same structure is used in the MixedModels package with the modification that the vertical blocks of $\mathbf{Z}$ and the diagonal blocks of $\mathbf{\Lambda_\theta}$ are indexed by the \textit{grouping factors} instead of the terms in the model formula.
+In practice this means that multiple random-effects terms with the same grouping factor are grouped into a composite term when forming the model structure.
+All the results and expressions in Tables 2 and 3 of \citet{bates.maechler.etal:2015} applies to MixedModels representation except for the number of parameters, $m_i$, associated with the $i$th block of random effects.
+
+\hypertarget{sleepstudy-example-random-effects-structure}{%
+\subsection{Sleepstudy example: random-effects structure}\label{subsec:sleepstudy-restruct}}
+
+The \texttt{sleepstudy} data described in \citet{bates.maechler.etal:2015} are available as a dataset in the \texttt{MixedModels} package
+<<label=sleepstudy;echo=true;results="hidden">>=
+using BenchmarkTools, DataFrames, MixedModels
+sleepstudy = MixedModels.dataset("sleepstudy");
+@
+<<label=describesleepstudy;line_width=92>>=
+describe(sleepstudy)
+@
+
+A model that allows for correlated random effects for the intercept and the slope with respect to \texttt{days} for each level of \texttt{subj}, can be fit as
+<<label=m1sleepstudy>>=
+m1 = fit(MixedModel, @formula(reaction ~ 1+days+(1+days|subj)), sleepstudy)
+@
+
+This model has one random-effects term created from $\ell_1=18$ levels of the grouping factor \texttt{subj}
+<<label=m1restruct>>=
+typeof(only(m1.reterms))
+@
+(The Julia \code{only} function, like the \code{first} function, returns the first element of a collection, but also checks that the collection has length 1.)
+\code{ReMat} is a templated type with the two template arguments, \code{Float64} and \code{2}, describing the element type and the dimension of the random effects for each level of the grouping factor
+<<label=m1levels;line_width=72>>=
+show(only(m1.reterms).levels)
+@
+The raw random-effects model matrix $\mathbf{X}_1$ is
+<<label=m1rawre;line_width=86>>=
+only(m1.reterms).z   # transpose of the raw random-effects model matrix
+@
+At the estimated $\mathbf{\theta}$
+<<label=m1theta>>=
+show(m1.theta)
+@
+the template matrix $\mathbf{\lambda}_1$ is
+<<label=m1lambda>>=
+only(m1.lambda)      # lower-triangular template matrix T
+@  
+
+Another model explored in \citet{bates.maechler.etal:2015} incorporates two random-effect terms to provide uncorrelated random effects for intercept and slope.
+<<label=m2>>=
+m2 = fit(MixedModel,@formula(reaction ~ 1+days+(1|subj)+(0+days|subj)), sleepstudy)
+@
+
+In the \texttt{MixedModels} formulation this model has a single \code{ReMat} structure
+<<label=m2remat>>=
+typeof(only(m2.reterms))
+@
+with the same raw random-effects model matrix $\mathbf{X}_1$ as for \code{m1}
+<<label=m1m2rawcheck>>=
+only(m1.reterms).z == only(m2.reterms).z
+@
+but a template matrix $\mathbf{\lambda}_1$ constrained to be diagonal
+<<label=m2lambda>>=
+only(m2.lambda)      # lower-triangular template matrix
+@
+
+The elements of the lower-triangular template matrix that are assigned values from $\mathbf{\theta}$ are determined by the \code{inds} field of the \code{ReMat}.
+<<label=m2theta>>=
+show(m2.theta)
+@
+<<label=m2inds>>=
+show(only(m2.reterms).inds)
+@
+
+At this point the details are not as important as simply recognizing that the random-effects model matrix $\mathbf{Z}$ and the relative covariance factor $\mathbf{\Lambda}_\theta$ are generated from blocks corresponding to grouping factors, not to random-effects terms in the model formula.
+
+\hypertarget{penalized-least-squares-through-extended-factorization}{%
+\subsection{Penalized least squares through an extended factorization}\label{subsec:extended-penalized-lsq}}
+
+As described in \citet{bates.maechler.etal:2015} the profiled log-likelihood or profiled REML criterion for an LMM can be evaluated from the minimum of a particular penalized least squares (PLS) problem and determinants of Cholesky factors that can be used to solve that problem.
+
+This is based on viewing the relative covariance factor $\mathbf{\Lambda}_\theta$ as generating the random effects vector, \(\mathcal{B}\), with distribution \(\mathcal{N}(\mathbf{0},\Sigma)\), from a
 ``spherical'' random effects vector, \(\mathcal{U}\), as
 \begin{equation}\label{eq:spherical-def}
 \mathcal{B} = \mathbf{\Lambda}_{\mathbf{\theta}} \mathcal{U}\quad\mathrm{where}\quad\mathcal{U}\sim\mathcal{N}(\mathbf{0},\sigma^2\mathbf{I}_q) .
@@ -148,138 +229,153 @@ f_{\mathcal{Y},\mathcal{U}}(\mathbf{y,u})=\frac{1}{(2\pi\sigma^2)^{(n+q)/2}}\exp
 \end{equation}
 where the penalized sum of squared residuals, \(r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})\), is
 \begin{equation}\label{eq:penalized-rss}
-r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})=\|\mathbf{y}-\mathbf{X\beta}-\mathbf{Z\Lambda_\theta u}\|^2+\|\mathbf{u}\|^2 .
-\end{equation}
-
-To this point this derivation is exactly that of \citet{bates.maechler.etal:2015}.
-Here's where it changes.
-The penalized sum of squared residuals can be written
-\begin{equation}\label{eq:prss}
 \begin{aligned}
-r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta}) &=  \|\mathbf{y}-\mathbf{X\beta}-\mathbf{Z\Lambda_\theta u}\|^2+\|\mathbf{u}\|^2\\
-&=\left\|\begin{bmatrix}
-\mathbf{Z\Lambda}&\mathbf{X}&\mathbf{y}\\
--\mathbf{I}_q&\mathbf{0}&\mathbf{0}
-\end{bmatrix}\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\right\|^2 \\
-&= \begin{bmatrix}-\mathbf{u}&-\mathbf{\beta}&1\end{bmatrix}
-\begin{bmatrix}
-\mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{Z\Lambda}+\mathbf{I} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{X} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{y} \\
-\mathbf{X}^\prime\mathbf{Z\Lambda} & \mathbf{X}^\prime\mathbf{X} & \mathbf{X}^\prime\mathbf{y} \\
-\mathbf{y}^\prime\mathbf{Z\Lambda} & \mathbf{y}^\prime\mathbf{X} & \mathbf{y}^\prime\mathbf{y}
-\end{bmatrix}
-\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\\
-&=
-\begin{bmatrix}-\mathbf{u}&-\mathbf{\beta}&1\end{bmatrix}
-\begin{bmatrix}
-\mathbf{R}_{ZZ}^\prime & \mathbf{0} & \mathbf{0} \\
-\mathbf{R}_{ZX}^\prime & \mathbf{R}_{XX}^\prime & \mathbf{0} \\
-\mathbf{r}_{Zy}^\prime & \mathbf{r}_{Xy}^\prime & r_{yy}
-\end{bmatrix}
-\begin{bmatrix}
-\mathbf{R}_{ZZ} & \mathbf{R}_{ZX} & \mathbf{r}_{Zy} \\
-\mathbf{0} & \mathbf{R}_{XX} & \mathbf{r}_{Xy} \\
-\mathbf{0} & \mathbf{0} & r_{yy}
-\end{bmatrix}
-\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\\
-&= \left\|
-\begin{bmatrix}
-\mathbf{R}_{ZZ} & \mathbf{R}_{ZX} & \mathbf{r}_{Zy} \\
-\mathbf{0} & \mathbf{R}_{XX} & \mathbf{r}_{Xy} \\
-\mathbf{0} & \mathbf{0} & r_{yy}
-\end{bmatrix}
-\begin{bmatrix}-\mathbf{u}\\ -\mathbf{\beta} \\ 1\end{bmatrix}\right\|^2\\
-&=\|\mathbf{r}_{Zy}-\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{R}_{ZZ}\mathbf{u}\|^2+ \|\mathbf{r}_{Xy}-\mathbf{R}_{XX}\mathbf{\beta}\|^2 + r_{yy}^2\\
-&=r_{yy}^2+\|\mathbf{R}_{XX}\mathbf{\beta}-\mathbf{r}_{Xy}\|^2+\|\mathbf{R}_{ZZ}\mathbf{u}+\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{r}_{Zy}\|^2
-\end{aligned}
-\end{equation} where \begin{equation}
-\mathbf{R}(\mathbf{\theta})=
-\begin{bmatrix}
-\mathbf{R}_{ZZ} & \mathbf{R}_{ZX} & \mathbf{r}_{Zy} \\
-\mathbf{0} & \mathbf{R}_{XX} & \mathbf{r}_{Xy} \\
-\mathbf{0} & \mathbf{0} & r_{yy}
-\end{bmatrix}
-\end{equation} is the upper triangular, right Cholesky factor of the
-symmetric, positive definite matrix
-\begin{equation}\label{eqn:right-Cholesky}
-\begin{bmatrix}
-\mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{Z\Lambda}+\mathbf{I} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{X} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{y} \\
-\mathbf{X}^\prime\mathbf{Z\Lambda} & \mathbf{X}^\prime\mathbf{X} & \mathbf{X}^\prime\mathbf{y} \\
-\mathbf{y}^\prime\mathbf{Z\Lambda} & \mathbf{y}^\prime\mathbf{X} & \mathbf{y}^\prime\mathbf{y}
-\end{bmatrix}
+  r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})
+  &=
+  \|\mathbf{y}-\mathbf{X\beta}-\mathbf{Z\Lambda_\theta u}\|^2+\|\mathbf{u}\|^2 \\
+  &=
+  \left\|
+    \begin{bmatrix}
+      \mathbf{Z\Lambda} & \mathbf{X} & \mathbf{y} \\
+     -\mathbf{I}_q & \mathbf{0} & \mathbf{0}
+    \end{bmatrix}
+    \begin{bmatrix}
+     -\mathbf{u} \\
+     -\mathbf{\beta} \\
+     1
+    \end{bmatrix}
+  \right\|^2 \\
+  &=
+    \begin{bmatrix}
+     -\mathbf{u^\prime} &
+     -\mathbf{\beta^\prime} &
+      1
+    \end{bmatrix}
+    \begin{bmatrix}
+      \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{Z\Lambda}+\mathbf{I} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{X} & \mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{y} \\
+      \mathbf{X}^\prime\mathbf{Z\Lambda} & \mathbf{X}^\prime\mathbf{X} & \mathbf{X}^\prime\mathbf{y} \\
+      \mathbf{y}^\prime\mathbf{Z\Lambda} & \mathbf{y}^\prime\mathbf{X} & \mathbf{y}^\prime\mathbf{y}
+    \end{bmatrix}
+    \begin{bmatrix}
+     -\mathbf{u} \\
+     -\mathbf{\beta} \\
+      1
+    \end{bmatrix} \\
+     &=
+    \begin{bmatrix}
+     -\mathbf{u^\prime} &
+     -\mathbf{\beta^\prime} &
+      1
+    \end{bmatrix}
+    \begin{bmatrix}
+      \mathbf{L_{ZZ}} & \mathbf{0} & \mathbf{0} \\
+      \mathbf{L_{XZ}} & \mathbf{L_{XX}} & \mathbf{0} \\
+      \mathbf{l_{yZ}} & \mathbf{l_{yX}} & l_\mathbf{yy}
+    \end{bmatrix}
+    \begin{bmatrix}
+      \mathbf{L_{ZZ}^\prime} & \mathbf{L_{XZ}^\prime} & \mathbf{l_{yZ}^\prime} \\
+      \mathbf{0} & \mathbf{L_{XX}^\prime} & \mathbf{l_{yX}^\prime} \\
+      \mathbf{0} & \mathbf{0} & l_\mathbf{yy}
+    \end{bmatrix}
+    \begin{bmatrix}
+     -\mathbf{u} \\
+     -\mathbf{\beta} \\
+      1
+    \end{bmatrix}\\
+  &= \left\|
+    \begin{bmatrix}
+      \mathbf{L_{ZZ}^\prime} & \mathbf{L_{XZ}^\prime} & \mathbf{l_{yZ}^\prime} \\
+      \mathbf{0} & \mathbf{L_{XX}^\prime} & \mathbf{l_{yX}^\prime} \\
+      \mathbf{0} & \mathbf{0} & l_\mathbf{yy}
+    \end{bmatrix}
+    \begin{bmatrix}
+     -\mathbf{u} \\
+     -\mathbf{\beta} \\
+      1
+    \end{bmatrix}
+    \right\|^2\\
+  &= \| \mathbf{l_{yZ}^\prime}-\mathbf{L_{XZ}^\prime\beta}-\mathbf{L_{ZZ}\mathbf{u}} \|^2 +
+     \| \mathbf{l_{yX}^\prime}-\mathbf{L_{XX}^\prime\beta}\|^2 + l_\mathbf{yy}^2 .
+  \end{aligned}
 \end{equation}
-The sub-matrices on the diagonal, \(\mathbf{R}_{ZZ}\) and \(\mathbf{R}_{XX}\), are upper triangular with, by construction,
-non-negative diagonal elements.
-In fact, the diagonal elements of \(\mathbf{R}_{ZZ}\) are necessarily positive because
-\(\mathbf{\Lambda}^\prime\mathbf{Z}^\prime\mathbf{Z}\mathbf{\Lambda}+\mathbf{I}\)
-is always positive definite, even when \(\mathbf{\Lambda}\) or
-\(\mathbf{Z}\) are rank-deficient. Its determinant,
-\(|\mathbf{R}_{ZZ}|\), is the product of its diagonal elements and must
-be positive.
+using the blocked lower-triangular, sparse Cholesky factor,
+\begin{equation}\label{eq:Omega}
+  \mathbf{\Omega_\theta}=
+  \begin{bmatrix}
+    \mathbf{\Lambda_\theta^\prime Z^\prime Z\Lambda_\theta+I} & \mathbf{\Lambda_\theta^\prime Z^\prime X} & \mathbf{\Lambda_\theta^\prime Z^\prime y} \\
+    \mathbf{X^\prime Z\Lambda_\theta} & \mathbf{X^\prime X} & \mathbf{X^\prime y} \\
+    \mathbf{y^\prime Z\Lambda_\theta} & \mathbf{y^\prime X} & \mathbf{y^\prime y}
+  \end{bmatrix}
+  \begin{bmatrix}
+    \mathbf{L_{ZZ}} & \mathbf{0} & \mathbf{0} \\
+    \mathbf{L_{XZ}} & \mathbf{L_{XX}} & \mathbf{0} \\
+    \mathbf{l_{yZ}} & \mathbf{l_{yX}} & l_\mathbf{yy}
+  \end{bmatrix}
+  \begin{bmatrix}
+    \mathbf{L_{ZZ}^\prime} & \mathbf{L_{XZ}^\prime} & \mathbf{l_{yZ}^\prime} \\
+    \mathbf{0} & \mathbf{L_{XX}^\prime} & \mathbf{l_{yX}^\prime} \\
+    \mathbf{0} & \mathbf{0} & l_\mathbf{yy}
+  \end{bmatrix} .
+\end{equation}
 
-Furthermore, for a fixed value of \(\mathbf{\theta}\) the minimum
-\(r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})\) is \(r_{yy}^2\) and
+From eqn.~\ref{eq:penalized-rss} it is obvious that, for a fixed value of \(\mathbf{\theta}\), the minimum
+\(r^2_\mathbf{\theta}(\mathbf{u},\mathbf{\beta})\) is \(l_\mathbf{yy}^2\) and
 the conditional estimate of \(\mathbf{\beta}\) satisfies
 \begin{equation}
-\mathbf{R}_{XX}\widehat{\mathbf{\beta}}(\mathbf{\theta})=\mathbf{r}_{Xy} .
+\mathbf{L_{XX}^\prime}\widehat{\mathbf{\beta}}(\mathbf{\theta})=\mathbf{l_{yX}^\prime} .
 \end{equation}
 The conditional mode, \(\tilde{\mathbf{u}}\), of
 \(\mathcal{U}\) given \(\mathcal{Y}=\mathbf{y}\), is the solution to
 \begin{equation}\label{eq:condmode}
-\mathbf{R}_{ZZ}\tilde{\mathbf{u}}=\mathbf{r}_{Zy}-\mathbf{R}_{ZX}\mathbf{\beta} .
+\mathbf{L_{ZZ}^\prime}\tilde{\mathbf{u}}=\mathbf{l_{yZ}^\prime}-\mathbf{L_{XZ}^\prime}\widehat{\mathbf{\beta}} .
 \end{equation}
-Technically, \(\mathbf{\beta}\) and \(\mathbf{\theta}\)
+(Technically, \(\mathbf{\beta}\) and \(\mathbf{\theta}\)
 in eqn.~\ref{eq:condmode} are assumed known because this expression
-is a statement about distributions. In practice, the estimates,
-\(\widehat{\mathbf{\theta}}\) and \(\widehat{\beta}\), are plugged in
+is a statement about distributions. 
+In practice, the estimates, \(\widehat{\mathbf{\theta}}\) and \(\widehat{\beta}\), are plugged in
 when evaluating the conditional modes or ``best linear unbiased
-predictors (BLUPs)'' as they are sometimes called.
+predictors (BLUPs)'' as they are sometimes called.)
 
-A Cholesky decomposition, \(\mathbf{A}=\mathbf{R}^\prime\mathbf{R}\),
-can be written in terms of \(\mathbf{R}\), the upper triangular factor
-on the right, or in terms of \(\mathbf{L}=\mathbf{R}^\prime\), the lower
-triangular factor on the left. In languages that use column-major
-ordering of arrays, such as Julia and R, there is a slight technical
-advantage in evaluating the lower triangular factor because the
-algorithm works column-wise, as opposed to the evaluation of the upper
-triangular factor that works row-wise. However, the penalized least squares problem is
-easier to express in terms of \(\mathbf{R}\) so we write the expressions
-in terms of \(\mathbf{R}\) even though the actual evaluation uses
-\(\mathbf{L}\).
+The determinant, $|\mathbf{L_{ZZ}}|$, is the product of the diagonal elements, which must be positive.
+Assuming that the fixed-effects model matrix, $\mathbf{X}$, has full column rank (this is checked and, if necessary, adjusted in a pre-processing step), \(\mathbf{L_{XX}}\) also has positive diagonal elements.
 
 To evaluate the likelihood,
 \begin{equation}\label{eq:likelihood-abstract}
 L(\mathbf{\theta},\mathbf{\beta},\sigma|\mathbf{y}) = \int_\mathbf{u} f_{\mathcal{Y},\mathcal{U}}(\mathbf{y},\mathbf{u})\, d\mathbf{u}
 \end{equation}
-we isolate the part of the joint density that depends on \(\mathbf{u}\) and perform a change of variable to
+we isolate the part of the joint density that depends on \(\mathbf{u}\) and perform a change of variable
 \begin{equation}\label{eq:u-system}
-\mathbf{v}=\mathbf{R}_{ZZ}\mathbf{u}+\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{r}_{Zy} .
+\mathbf{v}=\mathbf{L_{ZZ}^\prime u}+\mathbf{L_{XZ}^\prime\beta}-\mathbf{l_{yZ}^\prime} .
 \end{equation}
 From the properties of the multivariate Gaussian distribution
 \begin{equation}\label{eq:likelihood-integral}
 \begin{aligned}
-\int_{\mathbf{u}}\frac{1}{(2\pi\sigma^2)^{q/2}}\exp\left(-
-\frac{\|\mathbf{R}_{ZZ}\mathbf{u}+\mathbf{R}_{ZX}\mathbf{\beta}-\mathbf{r}_{Zy}\|^2}{2\sigma^2}\right)\,d\mathbf{u}
-&=\int_{\mathbf{v}}\frac{1}{(2\pi\sigma^2)^{q/2}}\exp\left(-\frac{\|\mathbf{v}\|^2}{2\sigma^2}\right)|\mathbf{R}_{ZZ}|^{-1}\,d\mathbf{v}\\
-&=|\mathbf{R}_{ZZ}|^{-1}
+  \int_{\mathbf{u}}\frac{1}{(2\pi\sigma^2)^{q/2}}
+    \exp\left(-\frac{\|\mathbf{L_{ZZ}^\prime u}+\mathbf{L_{XZ}^\prime\beta}-\mathbf{l_{yZ}^\prime}\|^2}{2\sigma^2}\right)
+    \,d\mathbf{u}
+  &= \int_{\mathbf{v}}\frac{1}{(2\pi\sigma^2)^{q/2}}
+    \exp\left(-\frac{\|\mathbf{v}\|^2}{2\sigma^2}\right)|\mathbf{L_{ZZ}^\prime}|^{-1}\,d\mathbf{v}\\
+  &=|\mathbf{L_{ZZ}}|^{-1}
 \end{aligned}
 \end{equation}
 from which we obtain the likelihood as
 \begin{equation}\label{eq:likelihood}
-L(\mathbf{\theta},\mathbf{\beta},\sigma)=\frac{|\mathbf{R}_{ZZ}|^{-1}}{(2\pi\sigma^2)^{n/2}}\exp\left(-
-\frac{r_{yy}^2 + \|\mathbf{R}_{XX}(\mathbf{\beta}-\widehat{\mathbf{\beta}})\|^2}{2\sigma^2}\right) .
+  L(\mathbf{\theta},\mathbf{\beta},\sigma)=
+  \frac{|\mathbf{L_{ZZ}}|^{-1}}{(2\pi\sigma^2)^{n/2}}
+  \exp\left(-\frac{l_\mathbf{yy}^2 + \|\mathbf{L_{XX}^\prime}(\mathbf{\beta}-\widehat{\mathbf{\beta}})\|^2}{2\sigma^2}\right) .
 \end{equation}
-If we plug in \(\mathbf{\beta}=\widehat{\mathbf{\beta}}\)
-and take the logarithm we can solve for the estimate of \(\sigma^2\),
-given \(\mathbf{\theta}\)
+Setting \(\mathbf{\beta}=\widehat{\mathbf{\beta}}\)
+and taking the logarithm provides the estimate of \(\sigma^2\),
+given \(\mathbf{\theta}\), as
 \begin{equation}\label{eq:sigma-hat}
-\widehat{\sigma^2}=\frac{r_{yy}^2}{n}
+\widehat{\sigma^2}=\frac{l_\mathbf{yy}^2}{n}
 \end{equation}
 which gives the \emph{profiled log-likelihood},
 \(\ell(\mathbf{\theta}|\mathbf{y})=\log L(\mathbf{\theta},\widehat{\mathbf{\beta}},\widehat{\sigma})\)
 as
 \begin{equation}\label{eq:profiled-log-likelihood}
--2\ell(\mathbf{\theta}|\mathbf{y})=2\log(|\mathbf{R}_{ZZ}|) +
-    n\left(1+\log\left(\frac{2\pi r_{yy}^2(\mathbf{\theta})}{n}\right)\right)
+-2\ell(\mathbf{\theta}|\mathbf{y})=2\log(|\mathbf{L_{ZZ}}|) +
+    n\left(1+\log\left(\frac{2\pi l_\mathbf{yy}^2(\mathbf{\theta})}{n}\right)\right)
 \end{equation}
 
 This may seem complicated but, relative to other formulations of the
@@ -289,14 +385,10 @@ One of the interesting aspects of this formulation is that it is not
 necessary to solve for the conditional estimate of \(\mathbf{\beta}\) or
 the conditional modes of the random effects when evaluating the
 log-likelihood. The two values needed for the log-likelihood evaluation,
-\(2\log(|\mathbf{R}_{ZZ}|)\) and \(r_{yy}^2\), are obtained directly from
-the diagonal elements of the Cholesky factor, \(\mathbf{R}\) or, in practice, its transpose, \(\mathbf{L}\).
+\(2\log(|\mathbf{L}_{ZZ}|)\) and \(l_\mathbf{yy}^2\), are obtained directly from
+the diagonal elements of the Cholesky factor.
 
-\hypertarget{Sparsity-in-random-effects-model-matrices}{%
-\section{Sparsity in random-effects model matrices}\label{sec:sparsity-in-random-effects}}
-
-The optimization to obtain the maximum likelihood estimates of the model parameters is conceptually quite simple.
-The model specification and the data are used to evaluate the model matrices, $\mathbf{Z}$ and $\mathbf{X}$, and the response vector, $\mathbf{y}$ from which an intermediate, symmetric, blocked matrix of "cross-products"
+Furthermore, $\mathbf{\Omega_\theta}$ and, from that, the Cholesky factor, $\mathbf{L_\theta}$ and the objective to be optimized can be evaluated for a given value of $\mathbf{\theta}$ from
 \begin{equation}\label{eqn:A}
 \mathbf{A} = \begin{bmatrix}
 \mathbf{Z}^\prime\mathbf{Z} & \mathbf{Z}^\prime\mathbf{X} & \mathbf{Z}^\prime\mathbf{y} \\
@@ -304,132 +396,197 @@ The model specification and the data are used to evaluate the model matrices, $\
 \mathbf{y}^\prime\mathbf{Z} & \mathbf{y}^\prime\mathbf{X} & \mathbf{y}^\prime\mathbf{y}
 \end{bmatrix}
 \end{equation}
-is constructed and stored.
-As this is a symmetric matrix that will be used to evaluate $\mathbf{L}$, only the lower triangle is stored.
+and $\mathbf{\Lambda_\theta}$.
 
-A key to creating efficient algorithms for fitting linear mixed-effects models is exploiting sparsity in $\mathbf{Z}$, the random-effects model matrix, and both sparsity and repetition in $\mathbf{\Lambda}$.
+In the \code{MixedModels} package the \code{LinearMixedModel} struct contains a symmetric blocked array in the \code{A} field and a similarly structured lower-triangular blocked array in the \code{L} field.
+Evaluation of the objective simply involves updating the template matrices, $\lambda_i, i=1,\dots,k$ in the \code{ReMat} structures then updating \code{L} from \code{A} and the $\lambda_i$.
 
-Random effects are associated with the levels of a \emph{grouping factor} representing \emph{observational units} or \emph{experimental units} in the study.
-Common examples of grouping factors are \texttt{subject} or \texttt{item} or \texttt{batch}.
-They are known sources of variability in the response but, in contrast to \emph{experimental factors}, they are not manipulated or controlled -- merely observed.
-In the language of statistical experimental design, these are blocking factors.
+\hypertarget{sleepstudy-example-objective-evaluation}{%
+\subsection{Sleepstudy example: objective evaluation}\label{subsec:sleepstudy-objective}}
 
-The adjective ``random'' actually applies to the levels of these grouping factors in the sense that the levels are not assumed to be repeatable across experiments.
+The sizes and structures of the blocks of \code{A} and \code{L} in a \code{LinearMixedModel} object can be displayed as a \code{BlockDescription} struct.
+<<label=sleepblockdesc>>=
+BlockDescription(m1)
+@
+(Because the last row of blocks, consisting of $\mathbf{y}^\prime\mathbf{Z}$, $\mathbf{y}^\prime\mathbf{X}$, and $\mathbf{y}^\prime\mathbf{y}$, always has just one row and is stored densely, it is omitted in this display.)
 
-As in lme4, in the MixedModels package a linear mixed-effects model in defined by a formula and a data table.
-The formula must contain one or more \emph{random-effects terms} that include a grouping factor and a linear model expression.
-A \textit{scalar random-effects term}, such as \texttt{(1|G)}, associates a single random effect with each level of the factor, \texttt{G}.
-A \textit{vector-valued random-effects term}, such as \texttt{(1+x|G)}, associates a vector of random effects with each level of \texttt{G}.
-
-The model matrix, $\mathbf{Z}$, and the relative covariance factor, $\mathbf{\Lambda}$, are further divided into blocks according to the grouping factors.
-Suppose the model has two distinct grouping factors for random-effects terms, \texttt{G} and \texttt{H}.
-Then $\mathbf{Z}$ is the horizontal concatenation of two model matrices stored sparsely in \texttt{ReMat} structures.
-The relative covariance factor, $\mathbf{\Lambda}$, is block diagonal.
-The diagonal blocks are either a multiple of the identity, for scalar random-effects, or block diagonal with the number of blocks being the number of levels of the grouping factor and each block being a copy of a small matrix $\lambda$. 
-All the random-effects terms for a given grouping factor are amalgamated into a single \texttt{ReMat} structure which contains a sparse representation of a set of columns from $\mathbf{Z}$.
-A complete description of the mixed-effects formula language is given in \citet{kleinschmidt.etal:2020}.
-For the purposes of this description we note that the model matrix $\mathbf{Z}$
-
-
-$\mathbf{\Lambda}$ and the blocks of $\mathbf{A}$ and $\mathbf{L}$ associated with the random effects are further decomposed into blocks according to the grouping factors for the random-effects terms.
-If there is more than one random-effects term for a single grouping factor, these terms are 
-
-
-
-For this discussion we will rely on several examples to illustrate how random-effects terms generate model matrices and relative covariance factors.
-
-
-The data sets used for illustration are primarily from the \texttt{lme4} package for \texttt{R} and are made available in the \texttt{MixedModels} package through its \texttt{dataset} function.
-
-<<label=packages;term=true>>=
-using DataFrames, LinearAlgebra, MixedModels # load packages
-using MixedModels: dataset        # use datasets from the MixedModels package
+The $(1,1)$ block of $\mathbf{A}$ is itself block diagonal, consisting of $\ell_1$ blocks each of size $p_1\times p_1$, i.e. $2\times2$.
+<<label=sleepAblock11>>=
+m1.A[Block(1, 1)]
+@
+and only the diagonal blocks must be stored, in this case as an array of size $2\times2\times18$
+<<label=sleepAblock11data>>=
+m1.A[Block(1, 1)].data
 @
 
-\hypertarget{A-single-simple-scalar-random-effects-term}{%
-\subsection{A model with a single, simple, scalar random-effects term}\label{subsec:single-simple-scalar}
-}
+Because these data are from a balanced experiment (i.e. each subject is observed the same number of times at the same numbers of days of sleep deprivation) and there are no missing data values, the diagonal blocks are all the same.
+In an unbalanced experiment or observational study this would not be the case.
 
-The \texttt{dyestuff} data from \citet{davies:1949} provide the yield (g.) of dyestuff in 5 samples from each of 6 batches of an intermediate product, here labelled \texttt{A} to \texttt{F}.
-<<label=dyestuff;term=true>>=
-dyestuff = dataset(:dyestuff);
-describe(dyestuff)
-@
-The formula in the model fit shown below states that the response, \texttt{yield}, is modeled as an overall mean plus a simple scalar random effect for each level of \texttt{batch}.
-<<label=fm1;term=true>>=
-fm1 = fit(MixedModel, @formula(yield ~ 1 + (1|batch)), dyestuff)
-@
-The model matrix, \(\mathbf{Z}\), for a simple, scalar random-effects terms is just the indicator matrix for the levels of the grouping factor; \texttt{batch}, in this case.
-<<label=fm1Z;term=true>>=
-first(fm1.allterms)
-@
-The model matrix, $\mathbf{X}$, for the fixed-effects parameters is a single column of 1's.
-<<label=fm1X;term=true>>=
-fm1.X'  # display the transpose for brevity
-@
-and the response, $\mathbf{y}$, is obtained directly from the data frame.
-<<label=fm1y;term=true>>=
-fm1.y'
+When all the random effects are generated from a single grouping factor, as in this example, the block structure of $\mathbf{L}$ is the same as that of $\mathbf{A}$.
+Furthermore, the $(1,1)$ block of $\mathbf{L}$ also has the uniform block-diagonal structure.
+<<label=sleepLblock11>>=
+typeof(m1.L[Block(1,1)])
 @
 
-When evalating the log-likelihood through the Cholesky factor (eqn.~\ref{eqn:right-Cholesky}), the model matrices $\mathbf{Z}$ and $\mathbf{X}$, and response, $\mathbf{y}$, appear only in products of the form $\mathbf{Z^\prime Z}$.  The products in the lower triangle are evaluated and stored in a blocked array, $\mathbf{A}$.
-<<label=fm1A;term=true>>=
-Symmetric(fm1.A, :L)
-@
-The lower triangle consists of six blocks.  \texttt{Block(1,1)} is $\mathbf{Z^\prime Z}$ and, for scalar random-effects terms, diagonal.  The elements on its diagonal are a frequency table of the levels of the grouping factor.
-<<label=fm1A11;term=true>>=
-fm1.A[Block(1,1)]
-@
-\texttt{Block(2,1)} is $\mathbf{Z^\prime X}$ and \texttt{Block(2,2)} is $\mathbf{X^\prime X}$.
-The blocks in the last row are $\mathbf{Z^\prime y}$, $\mathbf{X^\prime y}$, and $\mathbf{y^\prime y}$.
-<<label=fm1A21;term=true>>=
-fm1.A[Block(2,1)]
-fm1.A[Block(2,2)]
-@
+Evaluating the objective function for a new $\mathbf{\theta}$ vector involves
+\begin{enumerate}
+\item Install the elements of $\mathbf{\theta}$ into the appropriate positions in the lower triangle of the $\mathbf{\lambda}_i,i=1,\dots,k$ matrices (here, $k=1$).
+\item Copy the blocks of \code{m1.A} to the corresponding blocks of \code{m1.L}
+\item Update, in place, the diagonal sub-blocks of \code{m1.L[Block(1,1)]} by premultiplying by $\mathbf{\lambda}_1^\prime$ and postmultiplying by $\mathbf{\lambda}_1$.
+"Inflate" (i.e. add 1 to each element of) the diagonal.
+\item Postmultiply, in place, each block of columns of \code{m1.L[Block(2,1)]} and \code{m1.L[Block(3,1)]} by $\mathbf{\lambda}_1$
+\item Perform the blocked Cholesky factorization of the lower triangle of \code{m1.L}
+\end{enumerate}
 
-The left Cholesky factor is computed and stored in blocks of the same size and structure.
-<<label=fm1L;term=true>>=
-LowerTriangular(fm1.L)
-fm1.L[Block(1,1)]
-@
-
-The matrix $\mathbf{\Lambda}$ is a multiple of the identity for a model with a single scalar random-effects term and is never explicitly formed.
-<<label=fm1theta;term=true>>=
-theta = only(fm1.theta)  # the theta vector has length 1 in this case
-@
-
-To confirm that in the Cholesky factor the diagonal of \texttt{Block(1,1)} of $\mathbf{L}$ is the square root of the diagonal of $\mathbf{\Lambda^\prime Z^\prime Z\Lambda+I}$
-<<label=checkdiag;term=true>>=
-isapprox(abs2(first(fm1.L[Block(1,1)].diag)),
-    first(fm1.A[Block(1,1)].diag) * abs2(theta) + 1)
+Each of these steps requires working with only small sub-matrices or small sub-arrays.
+For example, the \code{scaleinflate!} method used to perform step 3 in this case is
+<<label=scaleinflate!;results="hidden">>=
+function scaleinflate!(Ljj::UniformBlockDiagonal{T}, Λj::ReMat{T,S}) where {T,S}
+    λ = Λj.λ
+    dind = diagind(S, S)
+    Ldat = Ljj.data
+    for k in axes(Ldat, 3)
+        f = view(Ldat, :, :, k)
+        lmul!(λ', rmul!(f, λ))
+        for i in dind
+            f[i] += one(T)  # inflate diagonal
+        end
+    end
+    Ljj
+end
 @
 
+It is conventional in Julia to give \textit{mutating} functions, which can change the values of one or more of their arguments, a name that ends in ``\code{!}''.
+Because $\mathbf{\lambda}$ is lower triangular, the calls to \code{lmul!} and \code{rmul!}, can operate in place on a \code{view} of the $k$th diagonal block.
+Especially in versions 1.5.0 and later of Julia, the use of views into arrays is very fast and often allocation free.
 
-A brief summary of the sizes and types of the blocks in $\mathbf{A}$ and $\mathbf{L}$ is obtained as
-<<label=fm1blockdescrip;term=true>>=
-BlockDescription(fm1)
+The entire sequence to evaluate the objective, given a value of $\mathbf{\theta}$, say
+<<label=theta;results="hidden">>=
+θ = m1.θ;
 @
-When the block structures are the same in $\mathbf{A}$ and $\mathbf{L}$, as in this case, only one type is shown.
-
-
-\hypertarget{Multiple-crossed-simple-scalar-random-effects-terms}{%
-\subsection{A model with a multiple, crossed, simple, scalar random-effects terms}\label{subsec:multiple-crossed-simple-scalar}
-}
-
-In the \texttt{penicillin} data set, also from \citet{davies:1949}, each \texttt{sample} (6 in total) is tested on each \texttt{plate} measuring the diameter of the more-or-less circular region where bacterial growth is inhibited. 
-<<label=penicillin;term=true>>=
-penicillin = dataset(:penicillin)
-describe(penicillin)
-@
-The two grouping factors, \texttt{plate} and \texttt{sample}, for the random effects are said to be \textit{crossed}.
-A model with an overall mean as a fixed effect and with random effects for each of the grouping factors is fit as
-<<label=fm2;term=true>>=
-fm2 = fit(MixedModel, @formula(diameter ~ 1 + (1|plate) + (1|sample)), penicillin)
+is very fast
+<<label=objective;cache=true>>=
+@btime objective(updateL!(setθ!(m1, θ)))
 @
 
-When there are multiple grouping factors for the random effects in the model formula each has a set of block in $\mathbf{A}$ and $\mathbf{L}$.
-<<label=fm2blockdesc;term=true>>=
-BlockDescription(fm2)
+\hypertarget{word-recognition-example-scalar-re}{%
+\subsection{Word-recognition example: scalar random effects}\label{subsec:word-scalar}}
+
+% Reinhold: Please fill in description of mrk17 or cite a reference.  Phillip or I can help with LaTeX/BibTeX if needed.
+
+The \code{mrk17_exp1} data set
+<<label=mrk17data;results="hidden">>=
+mrk17 = MixedModels.dataset("mrk17_exp1");
+@
+provides response times (ms) by 73 subjects (\code{subj}) exposed to 240 items (\code{item}) under different experimental conditions
+<<label=mrk17desc>>=
+describe(mrk17)
+@
+The experimental factors are all two-level factors:
+the items are words and their word frequency (\code{F}) is dichotomized as low-frequency (\code{LF}) versus high-frequency (\code{HF}), the priming in the experiment is unrelated (\code{unr}) or related (\code{rel}) to the target, and the image quality is clear (\code{clr}) or degraded (\code{deg}).
+The \code{lQ} factor is the lagged image quality (i.e. the image quality of the previous target) and \code{lT} is the lagged target status; word (\code{WD}) or non-word (\code{NW}).
+
+Each of these factors is expressed in a $\pm1$ encoding using the Helmert contrast coding.
+<<label=mrkcontrasts;results="hidden">>=
+contr = Dict(nm => HelmertCoding() for nm in (:F, :P, :Q, :lQ, :lT));
+@
+
+Often the response rate (inverse of the response time) is a more suitable metric for the analysis of such data.
+An initial model, incorporating scalar random effects for \code{subj} and for \code{item} and expressing the response as a rate per second, is fit as
+<<label=m3form;results="hidden">>=
+m3form = @formula 1000/rt ~ 1 + F*P*Q*lQ*lT + (1|subj) + (1|item);
+m3 = fit(MixedModel, m3form, mrk17, contrasts=contr);
+@
+Printing of the fixed-effects coefficient estimates, up to fifth order interactions, is suppressed here.
+The variance estimates for the random effects are
+<<label=m3varcorr>>=
+VarCorr(m3)
+@
+and the block descriptions are
+<<label=m3blockdesc>>=
+BlockDescription(m3)
+@
+
+Notice that even though the term \code{(1|subj)} occurs before \code{(1|item)} in the formula, the terms have been rearranged in the blocks so that the $(1,1)$ corresponds to \code{item}.
+The purpose is to make the $(1,1)$ block as large as possible because that block preserves the sparsity of $\mathbf{A}$ in $\mathbf{L}$.
+In contrast, the $(2,2)$ block of $\mathbf{A}$ is diagonal but the $(2,2)$ block of $\mathbf{L}$ is dense.
+The process of creating the lower Cholesky factor "fills-in" the $(2,2)$ block unless the $(2,1)$ block has the special structure that each column has only one non-zero entry.
+
+In a model like this with multiple simple, scalar, random-effects terms (i.e. those of the form \code{(1|G)} for some grouping factor \code{G}) the $(2,1)$ block of $\mathbf{A}$ is the cross-tabulation of the levels of the first and second grouping factors.
+If the levels of the first grouping factor are \textit{nested} within those of the second grouping factor then the $(2,1)$ block has this structure and the $(2,2)$ block of both $\mathbf{A}$ and $\mathbf{L}$ are both diagonal.
+Otherwise, some fill-in occurs.
+
+Evaluating the objective for \code{m3} at a new value of $\mathbf{\theta}$ is very fast because the operations on the $(1,1)$ block, which is the largest block, are scalar operations.
+For example, the \code{scaleinflate!} method applied to this block just broadcasts an anonymous scalar function over the diagonal elements with \textit{fused dot-broadcasting}.
+<<label=scaleinflatem3;results="hidden";eval=false>>=
+function scaleinflate!(Ljj::Diagonal{T}, Λj::ReMat{T,1}) where {T}
+    Ljjd = Ljj.diag
+    Ljjd .= Ljjd .* abs2(only(Λj.λ)) .+ one(T)
+    Ljj
+end
+@
+
+``Dot broadcasting'' means that operators or function calls can be broadcast over the elements of a vector by adding a dot to the name.
+``Fused'' refers to fusing the implicit loops so that only one loop is needed in this case.
+The details are not terribly important in this case of applying a scalar function over the diagonal of a matrix but in general the point to notice is that a relatively sophisticated operation can be stated concisely while still attaining near optimal performance.
+
+The objective function evaluation is, again, remarkably fast
+<<label=m3theta;results="hidden">>=
+θ3 = m3.θ;
+@
+<<label=m3objective;cache=true>>=
+@btime objective(updateL!(setθ!(m3, θ3)))
+@
+
+\hypertarget{word-recognition-example-vector-re}{%
+\subsection{Word-recognition example: vector-valued random effects}\label{subsec:word-vector}}
+
+Combining vector-valued random effects, as in \S~\ref{subsec:sleepstudy-objective}, with multiple, crossed or partially crossed grouping factors, as in \S~\ref{subsec:word-scalar}, can produce linear mixed models that are very difficult to fit.
+Nevertheless, \citet{barrlevyscheepers2013a} suggested that such models should be a starting point in many analysis, resulting in considerable effort being expended in trying to fit such models.
+
+The reason for the difficulty in fitting such models is easy to understand; the dimension of $\mathbf{\theta}$ increases with the square of the dimension of the vector-valued random effects.
+Optimizing the objective over a higher dimensional $\mathbf{\theta}$ requires more evaluations of the objective and each objective evaluation is requires more time because the sizes of the blocks of $\mathbf{L}$ are larger.
+
+Furthermore, the optimum in such models frequently is on the boundary of the parameter space, corresponding to a singular covariance matrix for the random effects.
+
+A model with random ``slopes'' for each of the experimental factors by \code{subj} and for each of the experimental factors except word frequency (\code{F}) by \code{item} is fit as
+<<label=m4mod;results="hidden">>=
+m4form = @formula 1000/rt ~ 1+F*P*Q*lQ*lT+(1+P+Q+lQ+lT|item)+(1+F+P+Q+lQ+lT|subj);
+m4 = fit(MixedModel, m4form, mrk17, contrasts=contr);
+@
+<<label=m4varcorr;line_width=88>>=
+VarCorr(m4)
+@
+This model has, in addition to larger blocks,
+<<label=m4blockdesc>>=
+BlockDescription(m4)
+@
+a greater dimension of the covariance parameter, $\mathbf{\theta}$.
+<<label=m4thetadim>>=
+thetalen = (m3 = length(m3.theta), m4 = length(m4.theta))
+@
+
+The time required to fit the model increases because each evaluation of the objective takes longer
+<<label=m4objective;cache=true>>=
+@btime objective(updateL!(setθ!($m4, $(m4.θ))))
+@
+and because convergence to the optimum requires more evaluations of the objective.
+<<label=m4feval>>=
+feval = (m3 = m3.optsum.feval, m4 = m4.optsum.feval)
+@
+
+Even though this is not a ``maximal'' model, it does converge to a parameter value on the boundary.
+<<label=m4boundary>>=
+show(m4.theta[iszero.(m4.lowerbd)])
+@
+
+The singularity of the relative covariance factors can also be determined from their condition numbers
+<<label=m4cond>>=
+cond(m4)
+@
+or via a principal component analysis of the correlation matrices derived from the estimated random-effects covariance matrices.
+<<label=m4PCA>>=
+m4.PCA
 @
 
 %\bibliographystyle{jss}
