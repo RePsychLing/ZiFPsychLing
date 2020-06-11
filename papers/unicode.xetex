@@ -1,0 +1,98 @@
+% !TEX TS-program = xelatex 
+% !TEX encoding = UTF-8
+% !TEX spellcheck = en_US
+% !BIB TS-program = biber
+
+\documentclass[article]{jss}
+
+\usepackage{amsmath}
+\usepackage{amsfonts,amssymb}
+
+% This isn't the best way to do Unicode in general, but it's the best way to do a small
+% set of math symbols in text.
+
+%%%% change unicode to math mode sequences
+\usepackage{newunicodechar}
+\newunicodechar{ρ}{\ensuremath{\rho}}
+\newunicodechar{σ}{\ensuremath{\sigma}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{θ}{\ensuremath{\theta}}
+\newunicodechar{Σ}{\ensuremath{\Sigma}}
+\newunicodechar{λ}{\ensuremath{\lambda}}
+\newunicodechar{Λ}{\ensuremath{\Lambda}}
+
+%% almost as usual
+\author{Phillip M. Alday\\Max Planck Institute\And
+				Dave Kleinschmidt\\Rutgers University\And
+				Reinhold Kliegl\\University of Potsdam\And
+				Douglas Bates\\University of Wisconsin}
+
+\title{Efficient Evaluation of a Profiled Log-Likelihood for Linear Mixed-Effects Models}
+
+%% for pretty printing and a nice hypersummary also set:
+\Plainauthor{ Phillip M. Alday,  Dave Kleinschmidt,  Reinhold Kliegl,  Douglas Bates} %% comma-separated
+\Plaintitle{Efficient Evaluation of a Profiled Log-Likelihood for Linear Mixed-Effects Models} %% without formatting
+%% an abstract and keywords
+\Abstract{
+  An earlier paper (Bates, Maechler, Bolker and Walker, 2015) showed that
+  the profiled log-likelihood of a linear mixed-effects model can be
+  evaluated from the solution to a penalized least square problem and
+  described in some detail the implementation of this method in the lme4
+  package for R. In this paper we described an enhanced approach to this
+  PLS expression and its implementation in the MixedModels package for
+  Julia.
+}
+\Keywords{linear mixed models, penalized least squares, Cholesky decomposition, Julia language}
+\Plainkeywords{linear mixed models, penalized least squares, Cholesky decomposition, Julia language} %% without formatting
+
+%% publication information
+%% NOTE: Typically, this can be left commented and will be filled out by the technical editor
+%% \Volume{50}
+%% \Issue{9}
+%% \Month{June}
+%% \Year{2012}
+%% \Submitdate{2012-06-04}
+%% \Acceptdate{2012-06-04}
+
+%% The address of (at least) one author should be given
+%% in the following format:
+\Address{
+    Douglas Bates\\
+    Department of Statistics\\
+    1300 University Ave.\\
+    Madison, WI 53706\\
+    U.S.A.  \\\email{douglas.bates@wisc.edu}
+}
+%% It is also possible to add a telephone and fax number
+%% before the e-mail in the following format:
+%% Telephone: +43/512/507-7103
+%% Fax: +43/512/507-2851
+
+%% for those who use Sweave please include the following line (with % symbols):
+%% need no \usepackage{Sweave.sty}
+
+%% end of declarations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+\section{Body Text vs. mathmode escapes}
+ ρ - $\rho$ 
+ 
+ σ - $\sigma$ 
+ 
+ × - $\times$
+ 
+ θ - $\theta$
+ 
+ Σ - $\Sigma$
+ 
+ λ - $\lambda$ 
+ 
+ Λ - $\Lambda$ 
+
+\section{Verbatim}
+\begin{verbatim}
+ρ σ × θ Σ λ Λ
+\end{verbatim}
+
+\end{document}
