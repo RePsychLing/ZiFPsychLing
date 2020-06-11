@@ -1,10 +1,28 @@
+% !TEX TS-program = xelatex
+% !TEX encoding = UTF-8
+% !TEX spellcheck = en_US
+
 \documentclass[article]{jss}
 \usepackage{natbib}
 \usepackage{amsmath}
 \usepackage{amsfonts,amssymb}
 \usepackage{minted}
 \usepackage{mathspec}
-%\setmathsfont(Digits,Greek)[Uppercase=Plain,Lowercase=Regular,Scale=MatchLowercase]{GFS Porson}
+
+% This isn't the best way to do Unicode in general, but it's the best way to do a small
+% set of math symbols in text.
+
+%%%% change unicode to math mode sequences
+\usepackage{newunicodechar}
+\newunicodechar{ρ}{\ensuremath{\rho}}
+\newunicodechar{σ}{\ensuremath{\sigma}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{θ}{\ensuremath{\theta}}
+\newunicodechar{Σ}{\ensuremath{\Sigma}}
+\newunicodechar{λ}{\ensuremath{\lambda}}
+\newunicodechar{Λ}{\ensuremath{\Lambda}}
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% declarations for jss.cls %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
